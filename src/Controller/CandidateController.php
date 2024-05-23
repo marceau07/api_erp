@@ -20,82 +20,82 @@ use Symfony\Component\Uid\UuidV7;
 #[Route('/v1/candidates')]
 class CandidateController extends AbstractController
 {
-    #[Route('/', name: 'app_candidate_list', methods: ['GET'])]
-    public function allCandidates(CandidateRepository $candidateRepository, SerializerInterface $serializer): JsonResponse
-    {
-        return $this->json([
-            'success' => true,
-            'message' => "Récupération de la liste des centres d'ABC Formation",
-            'centers' => json_decode($serializer->serialize($candidateRepository->findAll(), 'json'), true),
-        ]);
+  #[Route('/', name: 'app_candidate_list', methods: ['GET'])]
+  public function allCandidates(CandidateRepository $candidateRepository, SerializerInterface $serializer): JsonResponse
+  {
+    return $this->json([
+      'success' => true,
+      'message' => "Récupération de la liste des centres d'ABC Formation",
+      'centers' => json_decode($serializer->serialize($candidateRepository->findAll(), 'json'), true),
+    ]);
+  }
+
+  #[Route('/{email}', name: 'app_candidate_show', methods: ['GET'])]
+  public function aCandidate(CandidateRepository $candidateRepository, SerializerInterface $serializer, string $email): JsonResponse
+  {
+    $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
+    if ($candidate instanceof Candidate) {
+      return $this->json([
+        'success' => true,
+        'message' => 'Affichage du candidat `' . $candidate->getEmailCandidate() . '` !',
+        'candidate' => json_decode($serializer->serialize($candidate, 'json'), true),
+      ]);
     }
+    return $this->json([
+      'success' => false,
+      'message' => 'Le candidat recherché est inconnu !'
+    ]);
+  }
 
-    #[Route('/{email}', name: 'app_candidate_show', methods: ['GET'])]
-    public function aCandidate(CandidateRepository $candidateRepository, SerializerInterface $serializer, string $email): JsonResponse
-    {
-        $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
-        if ($candidate instanceof Candidate) {
-            return $this->json([
-                'success' => true,
-                'message' => 'Affichage du candidat `' . $candidate->getEmailCandidate() . '` !',
-                'candidate' => json_decode($serializer->serialize($candidate, 'json'), true),
-            ]);
-        }
-        return $this->json([
-            'success' => false,
-            'message' => 'Le candidat recherché est inconnu !'
-        ]);
+  #[Route('/{email}/verify/{uuid}', name: 'app_candidate_confirm', methods: ['GET'])]
+  public function confirm(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, SerializerInterface $serializer, string $email, string $uuid): JsonResponse
+  {
+    $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
+    if ($candidate instanceof Candidate && $candidate->getUuidCandidate()->toHex() === $uuid && $candidate->isIsEnabledCandidate() === false) {
+      $candidate->setIsEnabledCandidate(true);
+
+      $em = $doctrine->getManager();
+      $em->persist($candidate);
+      $em->flush();
+
+      return $this->json([
+        'success' => true,
+        'message' => 'Félicitation, vous avez réussi !',
+        'candidate' => json_decode($serializer->serialize($candidate, 'json'), true),
+      ]);
     }
+    return $this->json([
+      'success' => false,
+      'message' => 'La confirmation s\'est mal passée ! Veuillez réessayer...'
+    ]);
+  }
 
-    #[Route('/{email}/verify/{uuid}', name: 'app_candidate_confirm', methods: ['GET'])]
-    public function confirm(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, SerializerInterface $serializer, string $email, string $uuid): JsonResponse
-    {
-        $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
-        if ($candidate instanceof Candidate && $candidate->getUuidCandidate()->toHex() === $uuid && $candidate->isIsEnabledCandidate() === false) {
-            $candidate->setIsEnabledCandidate(true);
+  #[Route('/', name: 'app_candidate_add', methods: ['POST'])]
+  public function addCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, MailerInterface $mailer): JsonResponse
+  {
+    if (strlen($request->request->get("candidate_email")) >= 7 && strlen($request->request->get("candidate_email")) <= 255) {
+      if (filter_var($request->request->get("candidate_email"), FILTER_VALIDATE_EMAIL)) {
+        if (!$candidateRepository->findOneBy(['email_candidate' => $request->request->get("candidate_email")]) instanceof Candidate) {
+          $em = $doctrine->getManager();
+          $candidate = new Candidate();
+          $candidate->setEmailCandidate($request->request->get("candidate_email"));
+          if (!empty($request->request->get("candidate_dob"))) {
+            $candidate->setDobCandidate(date_create_immutable($request->request->get("candidate_dob")));
+          }
+          $em->persist($candidate);
+          $em->flush();
 
-            $em = $doctrine->getManager();
-            $em->persist($candidate);
-            $em->flush();
-
-            return $this->json([
-                'success' => true,
-                'message' => 'Félicitation, vous avez réussi !',
-                'candidate' => json_decode($serializer->serialize($candidate, 'json'), true),
-            ]);
-        }
-        return $this->json([
-            'success' => false,
-            'message' => 'La confirmation s\'est mal passée ! Veuillez réessayer...'
-        ]);
-    }
-
-    #[Route('/', name: 'app_candidate_add', methods: ['POST'])]
-    public function addCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, MailerInterface $mailer): JsonResponse
-    {
-        if (strlen($request->request->get("candidate_email")) >= 7 && strlen($request->request->get("candidate_email")) <= 255) {
-            if (filter_var($request->request->get("candidate_email"), FILTER_VALIDATE_EMAIL)) {
-                if (!$candidateRepository->findOneBy(['email_candidate' => $request->request->get("candidate_email")]) instanceof Candidate) {
-                    $em = $doctrine->getManager();
-                    $candidate = new Candidate();
-                    $candidate->setEmailCandidate($request->request->get("candidate_email"));
-                    if (!empty($request->request->get("candidate_dob"))) {
-                        $candidate->setDobCandidate(date_create_immutable($request->request->get("candidate_dob")));
-                    }
-                    $em->persist($candidate);
-                    $em->flush();
-
-                    // Envoie de l'email
-                    $email = (new Email())
-                        ->from('contact@marceau-rodrigues.fr')
-                        ->to($candidate->getEmailCandidate())
-                        //->cc('cc@example.com')
-                        ->bcc('marceau0707@gmail.com')
-                        ->replyTo('contact@marceau-rodrigues.fr')
-                        ->priority(Email::PRIORITY_HIGH)
-                        ->subject('[Rallye des Métiers] Confirmez votre email pour finaliser vos missions')
-                        ->text('Sending emails is fun again!')
-                        ->html('<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Transitional //EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+          // Envoie de l'email
+          $email = (new Email())
+            ->from('contact@marceau-rodrigues.fr')
+            ->to($candidate->getEmailCandidate())
+            //->cc('cc@example.com')
+            ->bcc('marceau0707@gmail.com')
+            ->replyTo('contact@marceau-rodrigues.fr')
+            ->priority(Email::PRIORITY_HIGH)
+            ->subject('[Rallye des Métiers] Confirmez votre email pour finaliser vos missions')
+            ->text('Sending emails is fun again!')
+            ->html('<!DOCTYPE HTML PUBLIC "-//W3C//DTD XHTML 1.0 Transitional //EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
                         <html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
                         <head>
                         <!--[if gte mso 9]>
@@ -349,8 +349,8 @@ class CandidateController extends AbstractController
                                 
                           <!--[if mso]><style>.v-button {background: transparent !important;}</style><![endif]-->
                         <div align="center">
-                          <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://api.marceau-rodrigues.fr/v1/candidates/' . $candidate->getEmailCandidate() . '/verify/' . $candidate->getUuidCandidate()->toHex() . '" style="height:47px; v-text-anchor:middle; width:263px;" arcsize="8.5%"  stroke="f" fillcolor="#65c0ed"><w:anchorlock/><center style="color:#FFFFFF;"><![endif]-->
-                            <a href="https://api.marceau-rodrigues.fr/v1/candidates/' . $candidate->getEmailCandidate() . '/verify/' . $candidate->getUuidCandidate()->toHex() . '" target="_blank" class="v-button v-font-size" style="box-sizing: border-box;display: inline-block;text-decoration: none;-webkit-text-size-adjust: none;text-align: center;color: #FFFFFF; background-color: #65c0ed; border-radius: 4px;-webkit-border-radius: 4px; -moz-border-radius: 4px; width:auto; max-width:100%; overflow-wrap: break-word; word-break: break-word; word-wrap:break-word; mso-border-alt: none;font-size: 14px;">
+                          <!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://api.adrar.dev/v1/candidates/' . $candidate->getEmailCandidate() . '/verify/' . $candidate->getUuidCandidate()->toHex() . '" style="height:47px; v-text-anchor:middle; width:263px;" arcsize="8.5%"  stroke="f" fillcolor="#65c0ed"><w:anchorlock/><center style="color:#FFFFFF;"><![endif]-->
+                            <a href="https://api.adrar.dev/v1/candidates/' . $candidate->getEmailCandidate() . '/verify/' . $candidate->getUuidCandidate()->toHex() . '" target="_blank" class="v-button v-font-size" style="box-sizing: border-box;display: inline-block;text-decoration: none;-webkit-text-size-adjust: none;text-align: center;color: #FFFFFF; background-color: #65c0ed; border-radius: 4px;-webkit-border-radius: 4px; -moz-border-radius: 4px; width:auto; max-width:100%; overflow-wrap: break-word; word-break: break-word; word-wrap:break-word; mso-border-alt: none;font-size: 14px;">
                               <span style="display:block;padding:14px 33px;line-height:120%;"><strong><span style="font-size: 16px; line-height: 19.2px;">Confirmer mon compte</span></strong></span>
                             </a>
                             <!--[if mso]></center></v:roundrect><![endif]-->
@@ -507,89 +507,89 @@ class CandidateController extends AbstractController
                         </body>
                         
                         </html>');
-                    $mailer->send($email);
+          $mailer->send($email);
 
-                    return $this->json([
-                        'success' => true,
-                        'message' => "Candidat " . $candidate->getEmailCandidate() . " ajouté.\nRendez-vous sur votre boîte mail pour la dernière étape !"
-                    ]);
-                }
-                return $this->json([
-                    'success' => false,
-                    'message' => "Le candidat existe déjà.\nRendez-vous sur votre boîte mail pour la dernière étape demandée !"
-                ]);
-            }
-            return $this->json([
-                'success' => false,
-                'message' => "Format de l'email incorrect..."
-            ]);
+          return $this->json([
+            'success' => true,
+            'message' => "Candidat " . $candidate->getEmailCandidate() . " ajouté.\nRendez-vous sur votre boîte mail pour la dernière étape !"
+          ]);
         }
         return $this->json([
-            'success' => false,
-            'message' => "Taille de l'email insuffisante... (7 caractères minimum, 255 maximum)"
+          'success' => false,
+          'message' => "Le candidat existe déjà.\nRendez-vous sur votre boîte mail pour la dernière étape demandée !"
         ]);
+      }
+      return $this->json([
+        'success' => false,
+        'message' => "Format de l'email incorrect..."
+      ]);
     }
+    return $this->json([
+      'success' => false,
+      'message' => "Taille de l'email insuffisante... (7 caractères minimum, 255 maximum)"
+    ]);
+  }
 
-    #[Route('/{email}', name: 'app_candidate_edit', methods: ['PUT', 'PATCH'])]
-    public function editCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, string $email): JsonResponse
-    {
-        if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $em = $doctrine->getManager();
-            $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
-            $data = json_decode($request->getContent(), true);
-            if (isset($data) && !empty($data)) {
-                if ($candidate instanceof Candidate) {
-                    if (!empty($data["candidate_email"]) && strlen($data["candidate_email"]) >= 7 && strlen($data["candidate_email"]) <= 255) {
-                        $candidate->setEmailCandidate($data["candidate_email"]);
-                    }
-                    if (!empty($data["candidate_dob"])) {
-                        $candidate->setDobCandidate(date_create_immutable($data["candidate_dob"]));
-                    }
-                    $em->persist($candidate);
-                    $em->flush();
-                    return $this->json([
-                        'success' => true,
-                        'message' => "Candidat " . $candidate->getEmailCandidate() . " mis à jour.\nRendez-vous sur votre boîte mail pour la dernière étape !"
-                    ]);
-                }
-                return $this->json([
-                    'success' => false,
-                    'message' => "Le candidat recherché n'existe pas..."
-                ]);
-            }
-            return $this->json([
-                'success' => false,
-                'message' => "Avez-vous bien formaté le formulaire ? `Body`->`Raw` et les éléments au format application/json"
-            ]);
+  #[Route('/{email}', name: 'app_candidate_edit', methods: ['PUT', 'PATCH'])]
+  public function editCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, string $email): JsonResponse
+  {
+    if (filter_var($email, FILTER_VALIDATE_EMAIL)) {
+      $em = $doctrine->getManager();
+      $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
+      $data = json_decode($request->getContent(), true);
+      if (isset($data) && !empty($data)) {
+        if ($candidate instanceof Candidate) {
+          if (!empty($data["candidate_email"]) && strlen($data["candidate_email"]) >= 7 && strlen($data["candidate_email"]) <= 255) {
+            $candidate->setEmailCandidate($data["candidate_email"]);
+          }
+          if (!empty($data["candidate_dob"])) {
+            $candidate->setDobCandidate(date_create_immutable($data["candidate_dob"]));
+          }
+          $em->persist($candidate);
+          $em->flush();
+          return $this->json([
+            'success' => true,
+            'message' => "Candidat " . $candidate->getEmailCandidate() . " mis à jour.\nRendez-vous sur votre boîte mail pour la dernière étape !"
+          ]);
         }
         return $this->json([
-            'success' => false,
-            'message' => "Format de l'email incorrect..."
+          'success' => false,
+          'message' => "Le candidat recherché n'existe pas..."
         ]);
+      }
+      return $this->json([
+        'success' => false,
+        'message' => "Avez-vous bien formaté le formulaire ? `Body`->`Raw` et les éléments au format application/json"
+      ]);
     }
+    return $this->json([
+      'success' => false,
+      'message' => "Format de l'email incorrect..."
+    ]);
+  }
 
-    #[Route('/{email}', name: 'app_candidate_delete', methods: ['DELETE'])]
-    public function deleteCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, string $email): JsonResponse
-    {
-        if (filter_var($email, FILTER_VALIDATE_EMAIL) && strlen($email) >= 7 && strlen($email) <= 255) {
-            $em = $doctrine->getManager();
-            $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
-            if ($candidate instanceof Candidate) {
-                $em->remove($candidate);
-                $em->flush();
-                return $this->json([
-                    'success' => true,
-                    'message' => "Candidat " . $email . " supprimé !"
-                ]);
-            }
-            return $this->json([
-                'success' => false,
-                'message' => "Le candidat recherché n'existe pas ou a déjà été supprimé..."
-            ]);
-        }
+  #[Route('/{email}', name: 'app_candidate_delete', methods: ['DELETE'])]
+  public function deleteCandidate(ManagerRegistry $doctrine, CandidateRepository $candidateRepository, Request $request, string $email): JsonResponse
+  {
+    if (filter_var($email, FILTER_VALIDATE_EMAIL) && strlen($email) >= 7 && strlen($email) <= 255) {
+      $em = $doctrine->getManager();
+      $candidate = $candidateRepository->findOneBy(['email_candidate' => $email]);
+      if ($candidate instanceof Candidate) {
+        $em->remove($candidate);
+        $em->flush();
         return $this->json([
-            'success' => false,
-            'message' => "Format de l'email incorrect..."
+          'success' => true,
+          'message' => "Candidat " . $email . " supprimé !"
         ]);
+      }
+      return $this->json([
+        'success' => false,
+        'message' => "Le candidat recherché n'existe pas ou a déjà été supprimé..."
+      ]);
     }
+    return $this->json([
+      'success' => false,
+      'message' => "Format de l'email incorrect..."
+    ]);
+  }
 }
